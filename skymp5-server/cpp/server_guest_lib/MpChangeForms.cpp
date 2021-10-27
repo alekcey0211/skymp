@@ -22,10 +22,10 @@ nlohmann::json MpChangeForm::ToJson(const MpChangeForm& changeForm)
   res["isRaceMenuOpen"] = changeForm.isRaceMenuOpen;
   res["dynamicFields"] = changeForm.dynamicFields.GetAsJson();
 
-  if (changeForm.lookDump.empty()) {
-    res["lookDump"] = nullptr;
+  if (changeForm.appearanceDump.empty()) {
+    res["appearanceDump"] = nullptr;
   } else {
-    res["lookDump"] = nlohmann::json::parse(changeForm.lookDump);
+    res["appearanceDump"] = nlohmann::json::parse(changeForm.appearanceDump);
   }
 
   if (changeForm.equipmentDump.empty()) {
@@ -38,6 +38,7 @@ nlohmann::json MpChangeForm::ToJson(const MpChangeForm& changeForm)
   res["magickaPercentage"] = changeForm.magickaPercentage;
   res["staminaPercentage"] = changeForm.staminaPercentage;
 
+  res["isDead"] = changeForm.isDead;
   return res;
 }
 
@@ -49,10 +50,10 @@ MpChangeForm MpChangeForm::JsonToChangeForm(simdjson::dom::element& element)
     isOpen("isOpen"), baseContainerAdded("baseContainerAdded"),
     nextRelootDatetime("nextRelootDatetime"), isDisabled("isDisabled"),
     profileId("profileId"), isRaceMenuOpen("isRaceMenuOpen"),
-    lookDump("lookDump"), equipmentDump("equipmentDump"),
+    appearanceDump("appearanceDump"), equipmentDump("equipmentDump"),
     dynamicFields("dynamicFields"), healthPercentage("healthPercentage"),
     magickaPercentage("magickaPercentage"),
-    staminaPercentage("staminaPercentage");
+    staminaPercentage("staminaPercentage"), isDead("isDead");
 
   MpChangeForm res;
   ReadEx(element, recType, &res.recType);
@@ -87,10 +88,10 @@ MpChangeForm MpChangeForm::JsonToChangeForm(simdjson::dom::element& element)
   ReadEx(element, profileId, &res.profileId);
   ReadEx(element, isRaceMenuOpen, &res.isRaceMenuOpen);
 
-  ReadEx(element, lookDump, &jTmp);
-  res.lookDump = simdjson::minify(jTmp);
-  if (res.lookDump == "null")
-    res.lookDump.clear();
+  ReadEx(element, appearanceDump, &jTmp);
+  res.appearanceDump = simdjson::minify(jTmp);
+  if (res.appearanceDump == "null")
+    res.appearanceDump.clear();
 
   ReadEx(element, equipmentDump, &jTmp);
   res.equipmentDump = simdjson::minify(jTmp);
@@ -101,6 +102,7 @@ MpChangeForm MpChangeForm::JsonToChangeForm(simdjson::dom::element& element)
     ReadEx(element, healthPercentage, &res.healthPercentage);
     ReadEx(element, magickaPercentage, &res.magickaPercentage);
     ReadEx(element, staminaPercentage, &res.staminaPercentage);
+    ReadEx(element, isDead, &res.isDead);
   } catch (JsonIndexException&) {
   } catch (...) {
     throw;
