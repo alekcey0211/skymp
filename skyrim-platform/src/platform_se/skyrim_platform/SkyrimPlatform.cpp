@@ -144,7 +144,7 @@ public:
 
         std::string ip = settings.GetProperty("server-ip").ToString();
         int uiport = (int)settings.GetProperty("server-port") + 1;
-        bool offlineMode = false; // bool(settings.GetProperty("offlineMode")); NEED HELP
+        bool offlineMode = (bool)settings.GetProperty("offlineMode");
         if (offlineMode) {
           for (auto& fileDir : fileDirs) {
             LoadFiles(GetPathsToLoad(fileDir));
