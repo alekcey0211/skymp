@@ -109,6 +109,13 @@ public:
   Napi::Value MakeProperty(const Napi::CallbackInfo& info);
   Napi::Value Set(const Napi::CallbackInfo& info);
   Napi::Value Get(const Napi::CallbackInfo& info);
+
+  Napi::Value Actor_Teleport(const Napi::CallbackInfo& info);
+  Napi::Value Actor_SetSpawnPoint(const Napi::CallbackInfo& info);
+
+  Napi::Value Refr_SetOpen(const Napi::CallbackInfo& info);
+
+  MpActor* GetActorByFormId(const Napi::Env env, const uint32_t formId);
 #pragma endregion
 
 private:
@@ -261,7 +268,8 @@ Napi::Object ScampServer::Init(Napi::Env env, Napi::Object exports)
       InstanceMethod("makeEventSource", &ScampServer::MakeEventSource),
       InstanceMethod("makeProperty", &ScampServer::MakeProperty),
       InstanceMethod("set", &ScampServer::Set),
-      InstanceMethod("get", &ScampServer::Get) });
+      InstanceMethod("get", &ScampServer::Get),
+      InstanceMethod("actor_teleport", &ScampServer::Actor_Teleport) });
   constructor = Napi::Persistent(func);
   constructor.SuppressDestruct();
   exports.Set("ScampServer", func);
@@ -1749,6 +1757,15 @@ Napi::String Method(const Napi::CallbackInfo& info)
 }
 
 #pragma region RH
+nlohmann::json GetJsonFromNapiValue(const Napi::Env env,
+                                    const Napi::Value value)
+{
+  if (!value.IsObject()) {
+    throw Napi::Error::New(env, "value is not an object");
+  }
+  return nlohmann::json::parse((std::string)value.ToString());
+}
+
 Napi::Value GetNapiObjectFromPapyrusObject(
   const Napi::Env env, const VarValue& value,
   const std::vector<std::string>& espmFilenames)
@@ -2164,10 +2181,10 @@ Napi::Value ScampServer::Place(const Napi::CallbackInfo& info)
         locationalDataValue.As<Napi::Object>();
       std::string cellOrWorldDesc =
         locationalDataObject.Get("cellOrWorldDesc").As<Napi::String>();
-      Napi::Int32Array pos =
-        locationalDataObject.Get("pos").As<Napi::Int32Array>();
-      Napi::Int32Array rot =
-        locationalDataObject.Get("rot").As<Napi::Int32Array>();
+      Napi::Float32Array pos =
+        locationalDataObject.Get("pos").As<Napi::Float32Array>();
+      Napi::Float32Array rot =
+        locationalDataObject.Get("rot").As<Napi::Float32Array>();
       FormDesc formDesc = FormDesc::FromString(cellOrWorldDesc);
       locationalData = { { pos[0], pos[1], pos[2] },
                          { rot[0], rot[1], rot[2] },
@@ -2296,8 +2313,95 @@ Napi::Value ScampServer::MakeProperty(const Napi::CallbackInfo& info)
 
 Napi::Value ScampServer::Set(const Napi::CallbackInfo& info)
 {
+  Napi::Env env = info.Env();
   try {
     auto formId = info[0].As<Napi::Number>().Uint32Value();
+    std::string propertyName = info[1].As<Napi::String>();
+    auto newValue = info[2];
+
+    auto& refr = partOne->worldState.GetFormAt<MpObjectReference>(formId);
+    bool isObject = newValue.IsObject();
+    bool isBool = newValue.IsBoolean();
+
+    if (isObject &&
+        (propertyName == "locationalData" || propertyName == "spawnPoint")) {
+      Napi::Object newValueObject = newValue.ToObject();
+      if (auto actor = dynamic_cast<MpActor*>(&refr)) {
+        std::string cellOrWorldDesc =
+          newValueObject.Get("cellOrWorldDesc").ToString();
+        LocationalData locationalData;
+        locationalData.cellOrWorldDesc = FormDesc::FromString(cellOrWorldDesc);
+        auto pos = newValueObject.Get("pos").As<Napi::Float32Array>();
+        auto rot = newValueObject.Get("rot").As<Napi::Float32Array>();
+        for (int i = 0; i < 3; ++i) {
+          locationalData.pos[i] = pos[i];
+          locationalData.rot[i] = rot[i];
+        }
+        if (propertyName == "locationalData") {
+          actor->Teleport(locationalData);
+        } else {
+          actor->SetSpawnPoint(locationalData);
+        }
+      } else {
+        throw Napi::Error::New(info.Env(),
+                               "mp.set can only change 'locationalData' "
+                               "for actors, not for refrs");
+      }
+    } else if (isBool && propertyName == "isOpen") {
+      refr.SetOpen(newValue.ToBoolean());
+    } else if (propertyName == "appearance") {
+      if (auto actor = dynamic_cast<MpActor*>(&refr)) {
+        // TODO: Live update of appearance
+        if (isObject) {
+          auto jsonValue = GetJsonFromNapiValue(env, newValue);
+          auto appearance = Appearance::FromJson(jsonValue);
+          actor->SetAppearance(&appearance);
+        } else {
+          actor->SetAppearance(nullptr);
+        }
+      }
+    } else if (propertyName == "inventory") {
+      if (isObject) {
+        auto jsonValue = GetJsonFromNapiValue(env, newValue);
+        auto inv = Inventory::FromJson(jsonValue);
+        refr.SetInventory(inv);
+      } else {
+        refr.SetInventory(Inventory());
+      }
+    } else if (propertyName == "equipment") {
+      // TODO: Implement this
+      throw Napi::Error::New(info.Env(),
+                             "mp.set is not implemented for 'equipment'");
+    } else if (propertyName == "isOnline") {
+      throw Napi::Error::New(info.Env(),
+                             "mp.set is not implemented for 'isOnline'");
+    } else if (propertyName == "formDesc") {
+      throw Napi::Error::New(info.Env(),
+                             "mp.set is not implemented for 'formDesc'");
+    } else if (propertyName == "onlinePlayers") {
+      throw Napi::Error::New(info.Env(),
+                             "mp.set is not implemented for 'onlinePlayers'");
+    } else if (propertyName == "neighbors") {
+      throw Napi::Error::New(info.Env(),
+                             "mp.set is not implemented for 'neighbors'");
+    } else if (isBool && propertyName == "isDisabled") {
+      if (refr.GetFormId() < 0xff000000)
+        throw Napi::Error::New(info.Env(),
+                               "'isDisabled' is not usable for non-FF forms");
+      newValue.ToBoolean() ? refr.Disable() : refr.Enable();
+    } else if (isBool && propertyName == "isDead") {
+      if (auto actor = dynamic_cast<MpActor*>(&refr)) {
+        actor->SetIsDead(newValue.ToBoolean());
+      }
+    } else {
+
+      EnsurePropertyExists(gamemodeApiState, propertyName);
+
+      auto& info = gamemodeApiState.createdProperties[propertyName];
+
+      // refr.SetProperty(propertyName, newValue, newValueChakra,
+      //                  info.isVisibleByOwner, info.isVisibleByNeighbors);
+    }
   } catch (std::exception& e) {
     throw Napi::Error::New(info.Env(), (std::string)e.what());
   }
@@ -2432,6 +2536,84 @@ Napi::Value ScampServer::Get(const Napi::CallbackInfo& info)
   }
   return info.Env().Undefined();
 }
+
+MpActor* ScampServer::GetActorByFormId(const Napi::Env env,
+                                       const uint32_t formId)
+{
+  auto& refr = partOne->worldState.GetFormAt<MpObjectReference>(formId);
+  auto actor = dynamic_cast<MpActor*>(&refr);
+
+  if (!actor) {
+    std::stringstream ss;
+    ss << "Form with id '";
+    ss << formId;
+    ss << "' don`t be an Actor";
+    throw Napi::Error::New(env, ss.str());
+  }
+  return actor;
+}
+
+LocationalData GetLocationalDataFromNapiObject(
+  const Napi::Object locationalDataObject)
+{
+  std::string cellOrWorldDesc =
+    locationalDataObject.Get("cellOrWorldDesc").As<Napi::String>();
+  Napi::Float32Array pos =
+    locationalDataObject.Get("pos").As<Napi::Float32Array>();
+  Napi::Float32Array rot =
+    locationalDataObject.Get("rot").As<Napi::Float32Array>();
+  FormDesc formDesc = FormDesc::FromString(cellOrWorldDesc);
+  LocationalData locationalData = { { pos[0], pos[1], pos[2] },
+                                    { rot[0], rot[1], rot[2] },
+                                    formDesc };
+  return locationalData;
+}
+
+Napi::Value ScampServer::Actor_Teleport(const Napi::CallbackInfo& info)
+{
+  try {
+    auto formId = info[0].As<Napi::Number>().Uint32Value();
+    auto actor = GetActorByFormId(info.Env(), formId);
+
+    Napi::Object locationalDataObject = info[1].As<Napi::Object>();
+    LocationalData locationalData =
+      GetLocationalDataFromNapiObject(locationalDataObject);
+    actor->Teleport(locationalData);
+  } catch (std::exception& e) {
+    throw Napi::Error::New(info.Env(), (std::string)e.what());
+  }
+  return info.Env().Undefined();
+}
+
+Napi::Value ScampServer::Actor_SetSpawnPoint(const Napi::CallbackInfo& info)
+{
+  try {
+    auto formId = info[0].As<Napi::Number>().Uint32Value();
+    auto actor = GetActorByFormId(info.Env(), formId);
+
+    Napi::Object locationalDataObject = info[1].As<Napi::Object>();
+    LocationalData locationalData =
+      GetLocationalDataFromNapiObject(locationalDataObject);
+    actor->SetSpawnPoint(locationalData);
+  } catch (std::exception& e) {
+    throw Napi::Error::New(info.Env(), (std::string)e.what());
+  }
+  return info.Env().Undefined();
+}
+
+Napi::Value ScampServer::Refr_SetOpen(const Napi::CallbackInfo& info)
+{
+  try {
+    auto formId = info[0].As<Napi::Number>().Uint32Value();
+    auto& refr = partOne->worldState.GetFormAt<MpObjectReference>(formId);
+    auto openState = info[1].As<Napi::Boolean>();
+    refr.SetOpen(openState);
+  } catch (std::exception& e) {
+    throw Napi::Error::New(info.Env(), (std::string)e.what());
+  }
+  return info.Env().Undefined();
+}
+
 #pragma endregion
 
 Napi::Object Init(Napi::Env env, Napi::Object exports)
